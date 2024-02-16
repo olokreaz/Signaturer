@@ -1,12 +1,5 @@
 #include <cstdint>
-#include <cstring>
-#include <filesystem>
-#include <format>
-#include <fstream>
-#include <functional>
-#include <iostream>
-#include <string>
-#include <vector>
+import std;
 
 using u64 = std::uint64_t;
 using u8 = std::uint8_t;
@@ -26,9 +19,9 @@ namespace fs = std::filesystem;
 5.	Результат писать в другой файл. Имя его получать при запуске  или формировать автоматически.
 */
 
-std::string padData( const std::string &data )
+std::string padData( const std::string_view data )
 {
-	std::string paddedData = data;
+	std::string paddedData = data . data( );
 	while ( paddedData . size( ) % 8 != 0 ) paddedData += '\0';
 	return paddedData;
 }
@@ -39,11 +32,11 @@ u64 processBlock( const std::string &block, size_t blockIndex )
 	// Преобразуем блок данных в uint64_t
 	u64 blockHash = *( u64 * ) block . data( );
 	// Выполняем некоторое сложное преобразование хэша
-	return blockHash ^ ( blockIndex * 1024 ); // Пример преобразования: XOR с умноженным индексом
+	return blockHash ^ ( blockIndex * 1024 );// Пример преобразования: XOR с умноженным индексом
 }
 
 // Простой хэш-алгоритм для блоков по 8 байт
-u64 simpleHash64( const std::string &data )
+u64 simpleHash64( const std::string_view data )
 {
 	std::string paddedData = padData( data );
 	u64         hash       = 0;
@@ -57,19 +50,20 @@ u64 simpleHash64( const std::string &data )
 	return hash;
 }
 
-std::vector < char > readFileBytes( const fs::path &filename )
+std::string readFileBytes( const fs::path &filename )
 {
 	std::ifstream file( filename, std::ios::binary );
 
 	if ( !file . is_open( ) )
 	{
 		std::cerr << "Не удалось открыть файл: " << filename << std::endl;
-		exit( 1 );
+		return { };
 	}
 
 	auto filesize = file_size( filename );
 	// Создаем буфер для хранения данных файла
-	std::vector < char > buffer( filesize );
+	std::string buffer;
+	buffer . resize( filesize );
 	// Считываем данные из файла в буфер
 	file . read( buffer . data( ), filesize );
 
@@ -85,32 +79,24 @@ enum class EStatusSigned
 };
 
 
-constexpr auto kOffsetNotIndexSpecific  = sizeof( u64 ) + 1;
+constexpr auto kHashSize                = sizeof( u64 );
 constexpr auto kOffsetWithIndexSpecific = sizeof( u64 ) + 2;
 
-EStatusSigned checkHashInFile( std::span < u8 > dataFile )
+EStatusSigned checkHashInFile( std::string_view dataFile )
 {
 	// Считываем данные из файла
-
-	const auto data = dataFile . subspan( 0, dataFile . size( ) - kOffsetNotIndexSpecific );
-	const auto hash = dataFile . subspan( dataFile . size( ) - kOffsetWithIndexSpecific, sizeof( u64 ) );
-
-	// Проверяем, достаточно ли данных в файле
-
-	if ( data . size( ) < 9 ) return EStatusSigned::kUnsigned;
-
-	const u8 *pHashData = data . data( ) + data . size( ) - sizeof( u64 ) - 1;
-	const u8 *pFlag     = data . data( ) + data . size( ) - 1;
-
-	// Проверяем, достаточно ли данных в файлеff(-10) bc(-9) ac(-8) dc(-7) ac(-6) bc(-5) ac(-4) dc(-3) bc(-2) ff(-1)
-
-	// Проверяем, чтобы первый и последний байты были равны 0xFF
+	if ( dataFile . size( ) < 9 ) return EStatusSigned::kUnsigned;
+	const u8 *pFlag = ( u8 * ) &dataFile[ dataFile . size( ) - 1 ];
 	if ( u8 ff = 0xff ; *pFlag != ff ) return EStatusSigned::kUnsigned;
 
-	// Проверяем, чтобы значение хеша совпадало с ожидаемым
-	u64 actualHash;
+	const auto data = dataFile . substr( 0, ( dataFile . size( ) - 1 ) - kHashSize - 1 );
 
-	std::memcpy( &actualHash, pHashData, sizeof( u64 ) );
+	const auto hashData = dataFile . substr( ( dataFile . size( ) - 1 ) - kHashSize, kHashSize );
+
+	const u8 *pHashData = ( u8 * ) hashData . data( );
+
+	// Проверяем, чтобы значение хеша совпадало с ожидаемым
+	u64 actualHash = *reinterpret_cast < const u64 * >( pHashData );
 
 	u64 expectedHash = simpleHash64( { data . data( ), data . data( ) + data . size( ) } );
 
@@ -134,13 +120,13 @@ int main( int argc, char **argv )
 			std::string path;
 			std::cin >> path;
 			pathInput  = path;
-			pathOutput = pathInput . replace_extension( ".signed" );
+			pathOutput = pathInput;
 			break;
 		}
 		case 2 :
 		{
 			pathInput  = argv[ 1 ];
-			pathOutput = pathInput . replace_extension( ".signed" );
+			pathOutput = pathInput;
 		}
 		case 3 :
 		{
@@ -154,11 +140,13 @@ int main( int argc, char **argv )
 		}
 	}
 
+	pathOutput += ".sig";
+
 
 	const auto dataFile = readFileBytes( pathInput );
-	const auto data     = std::span( dataFile . data( ), dataFile . size( ) - dataFile[ dataFile . size( ) - 1 ] == 0xff ? kOffsetWithIndexSpecific : 0 );
+	const auto data     = dataFile[ dataFile . size( ) - 1 ] == 0xff ? dataFile . substr( 0, dataFile . size( ) - 1 - kHashSize ) : dataFile;
 
-	auto status = checkHashInFile( { ( uint8_t * ) dataFile . data( ), dataFile . size( ) } );
+	auto status = checkHashInFile( dataFile );
 
 	switch ( status )
 	{
@@ -187,19 +175,20 @@ int main( int argc, char **argv )
 	{
 		case 1 :
 		{
-			std::ofstream file( pathOutput, std::ios::binary | std::ios::app );
+			std::ofstream file( pathOutput, std::ios::binary | std::ios::trunc );
 			if ( !file . is_open( ) )
 			{
 				std::cerr << "Can't opened file " << pathOutput << std::endl;
-				exit( 1 );
+				return 1;
 			}
 
 			// Записываем данные в файл
-			//					file.write(data.data(), data.size());
+			file . write( data . data( ), data . size( ) );
 			// Вычисляем хэш для данных
-			u64 hash = simpleHash64( { data . data( ), data . data( ) + data . size( ) } );
+			u64 hash = simpleHash64( data . data( ) );
+
 			// Записываем хэш в файл
-			file . write( static_cast < char * >( &hash ), sizeof hash );
+			file . write( ( const char * ) &hash, sizeof hash );
 			// Записываем флаг в файл
 			file . write( "\xFF", 1 );
 			break;
@@ -210,7 +199,7 @@ int main( int argc, char **argv )
 			if ( !file . is_open( ) )
 			{
 				std::cerr << "Can't opened file " << pathOutput << std::endl;
-				exit( 1 );
+				return 1;
 			}
 			// Записываем данные в файл
 			file . write( data . data( ), data . size( ) );
@@ -222,14 +211,14 @@ int main( int argc, char **argv )
 			if ( !file . is_open( ) )
 			{
 				std::cerr << "Can't opened file " << pathOutput << std::endl;
-				exit( 1 );
+				return 1;
 			}
 			// Записываем данные в файл
 			file . write( data . data( ), data . size( ) );
 			// Вычисляем хэш для данных
 			u64 hash = simpleHash64( { data . data( ), data . data( ) + data . size( ) } );
 			// Записываем хэш в файл
-			file . write( static_cast < char * >( &hash ), sizeof hash );
+			file . write( ( char * ) &hash, sizeof hash );
 			// Записываем флаг в файл
 			file . write( "\xFF", 1 );
 			break;
