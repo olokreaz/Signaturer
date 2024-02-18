@@ -182,11 +182,15 @@ int main( int argc, char **argv )
 		{
 			if ( status == EStatusSigned::kSigned )
 			{
-				std::cout << "file havedte sign" << std::endl;
+				std::cout << "file haved sign" << std::endl;
 				return 0;
 			}
 
-			if ( !bCustomOutputPath ) if ( pathOutput . extension( ) != ".sig" ) pathOutput += ".sig";
+			if ( !bCustomOutputPath )
+			{
+				if (const auto ext = pathOutput . extension( ); ext == ".unsig" ) pathOutput.replace_extension(".sig");
+				else if (ext == ".sig") break;
+			}
 
 			std::ofstream file( pathOutput, std::ios::binary | std::ios::trunc );
 			if ( !file . is_open( ) )

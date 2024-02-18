@@ -95,9 +95,6 @@
     <ItemGroup>
         <ClCompile Include="TZ_Signaturer.cpp"/>
     </ItemGroup>
-    <ItemGroup>
-        <Content Include="test.txt"/>
-    </ItemGroup>
     <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets"/>
     <ImportGroup Label="ExtensionTargets">
     </ImportGroup>
