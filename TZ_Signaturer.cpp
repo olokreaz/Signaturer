@@ -75,34 +75,34 @@ enum class EStatusSigned
 {
 	kSigned ,
 	kUnsigned ,
-	kChangedData ,
+	// kChangedData ,
 };
 
 
 constexpr auto kHashSize                = sizeof( u64 );
 constexpr auto kOffsetWithIndexSpecific = sizeof( u64 ) + 2;
 
-EStatusSigned checkHashInFile( std::string_view dataFile )
+EStatusSigned checkHashInFile( const std::string &dataFile )
 {
 	// Считываем данные из файла
 	if ( dataFile . size( ) < 9 ) return EStatusSigned::kUnsigned;
+
 	const u8 *pFlag = ( u8 * ) &dataFile[ dataFile . size( ) - 1 ];
 	if ( u8 ff = 0xff ; *pFlag != ff ) return EStatusSigned::kUnsigned;
 
-	const auto data = dataFile . substr( 0, ( dataFile . size( ) - 1 ) - kHashSize - 1 );
+	const std::string data     = dataFile . substr( 0, dataFile . size( ) - kHashSize - 1 );
+	const std::string hashData = dataFile . substr( ( dataFile . size( ) - 1 ) - kHashSize, kHashSize );
 
-	const auto hashData = dataFile . substr( ( dataFile . size( ) - 1 ) - kHashSize, kHashSize );
-
-	const u8 *pHashData = ( u8 * ) hashData . data( );
+	const u64 *pHashData = ( u64 * ) hashData . data( );
 
 	// Проверяем, чтобы значение хеша совпадало с ожидаемым
-	u64 actualHash = *reinterpret_cast < const u64 * >( pHashData );
+	u64 actualHash = *pHashData;
 
-	u64 expectedHash = simpleHash64( { data . data( ), data . data( ) + data . size( ) } );
+	u64 expectedHash = simpleHash64( data );
 
-	if ( actualHash == expectedHash ) return EStatusSigned::kSigned;
+	if ( actualHash != expectedHash ) return EStatusSigned::kUnsigned;
 
-	return EStatusSigned::kChangedData;
+	return EStatusSigned::kSigned;
 }
 
 int main( int argc, char **argv )
@@ -110,6 +110,7 @@ int main( int argc, char **argv )
 
 	fs::path pathInput;
 	fs::path pathOutput;
+	bool     bCustomOutputPath = false;
 
 
 	switch ( argc )
@@ -130,8 +131,9 @@ int main( int argc, char **argv )
 		}
 		case 3 :
 		{
-			pathInput  = argv[ 1 ];
-			pathOutput = argv[ 2 ];
+			pathInput         = argv[ 1 ];
+			pathOutput        = argv[ 2 ];
+			bCustomOutputPath = true;
 		}
 		default :
 		{
@@ -140,11 +142,17 @@ int main( int argc, char **argv )
 		}
 	}
 
-	pathOutput += ".sig";
 
+	const auto  dataFile = readFileBytes( pathInput );
+	std::string data;
+	// const auto data     = dataFile[ dataFile . size( ) - 1 ] == 0xff ? dataFile . substr( 0, dataFile . size( ) - 1 - kHashSize ) : dataFile;
 
-	const auto dataFile = readFileBytes( pathInput );
-	const auto data     = dataFile[ dataFile . size( ) - 1 ] == 0xff ? dataFile . substr( 0, dataFile . size( ) - 1 - kHashSize ) : dataFile;
+	if ( dataFile . ends_with( 0xff ) )
+		//
+		data = dataFile . substr( 0, dataFile . size( ) - 1 - kHashSize );
+	else
+		//
+		data = dataFile;
 
 	auto status = checkHashInFile( dataFile );
 
@@ -154,8 +162,6 @@ int main( int argc, char **argv )
 			break;
 		case EStatusSigned::kUnsigned : std::cout << "File is unsigned" << std::endl;
 			break;
-		case EStatusSigned::kChangedData : std::cout << "File is maybe changed" << std::endl;
-			break;
 	}
 
 	int input_action;
@@ -164,8 +170,7 @@ int main( int argc, char **argv )
 	{
 		std::cout << "1. Add sign\n";
 		std::cout << "2. Remove sign\n";
-		std::cout << "3. Resign\n";
-		std::cout << "4. Exit\n";
+		std::cout << "3. Exit\n";
 
 		std::cout << "Select action: ";
 		std::cin >> input_action;
@@ -175,6 +180,14 @@ int main( int argc, char **argv )
 	{
 		case 1 :
 		{
+			if ( status == EStatusSigned::kSigned )
+			{
+				std::cout << "file havedte sign" << std::endl;
+				return 0;
+			}
+
+			if ( !bCustomOutputPath ) if ( pathOutput . extension( ) != ".sig" ) pathOutput += ".sig";
+
 			std::ofstream file( pathOutput, std::ios::binary | std::ios::trunc );
 			if ( !file . is_open( ) )
 			{
@@ -195,32 +208,27 @@ int main( int argc, char **argv )
 		}
 		case 2 :
 		{
+			if ( status == EStatusSigned::kUnsigned )
+			{
+				std::cout << "file not have sign" << std::endl;
+				return 0;
+			}
+
+			if ( !bCustomOutputPath )
+			{
+				if ( pathOutput . extension( ) == ".sig" ) pathOutput . replace_extension( ".unsig" );
+				else pathOutput += ".usig";
+			}
+
 			std::ofstream file( pathOutput, std::ios::binary | std::ios::trunc );
+
 			if ( !file . is_open( ) )
 			{
 				std::cerr << "Can't opened file " << pathOutput << std::endl;
 				return 1;
 			}
-			// Записываем данные в файл
+
 			file . write( data . data( ), data . size( ) );
-			break;
-		}
-		case 3 :
-		{
-			std::ofstream file( pathOutput, std::ios::binary | std::ios::trunc );
-			if ( !file . is_open( ) )
-			{
-				std::cerr << "Can't opened file " << pathOutput << std::endl;
-				return 1;
-			}
-			// Записываем данные в файл
-			file . write( data . data( ), data . size( ) );
-			// Вычисляем хэш для данных
-			u64 hash = simpleHash64( { data . data( ), data . data( ) + data . size( ) } );
-			// Записываем хэш в файл
-			file . write( ( char * ) &hash, sizeof hash );
-			// Записываем флаг в файл
-			file . write( "\xFF", 1 );
 			break;
 		}
 		case 4 : { return 0; }
